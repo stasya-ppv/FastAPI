@@ -1,26 +1,30 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
-from PIL import Image
-import cv2
-import os
-from io import BytesIO
-import uvicorn
-
 """
 Чтобы проверить работу API в интернете, необходимо перейти по http://localhost:8000/docs
 Чтобы проверить работу методов через командную строку Windows
     1. Надо перейти в каталог с данным кодом и запустить его
         uvicorn main:app --reload
     2. Для загрузки файла:
-        curl -X 'PUT' "http://127.0.0.1:8000/upload/{file_id}" -F "file=@path_to_your_file"
+        curl -X 'PUT' "http://127.0.0.1:8000/upload/{file_uuid}" -F "file=@path_to_your_file"
         file_id — это уникальный id для загружаемого файла.
         path_to_your_file — это путь к файлу на вашем компьютере.
     3. Для скачивания файла:
     с превью:
-        curl -X 'GET' "http://127.0.0.1:8000/download/{file_id}?width=200&height=200" 
+        curl -X 'GET' "http://127.0.0.1:8000/download/{file_uuid}?width=200&height=200"
     без превью:
-        curl -X 'GET' "http://127.0.0.1:8000/download/{file_id}" 
+        curl -X 'GET' "http://127.0.0.1:8000/download/{file_uuid}"
 """
+
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi.responses import FileResponse, StreamingResponse
+from PIL import Image
+from io import BytesIO
+import cv2
+import os
+import uvicorn
+import uuid
+from database import get_db
+from crud import create_media_file, get_media_file_by_id
+from sqlalchemy.orm import Session
 
 app = FastAPI()
 
@@ -28,52 +32,47 @@ app = FastAPI()
 UPLOAD_DIRECTORY = "uploads"
 os.makedirs(UPLOAD_DIRECTORY, exist_ok=True)
 
-image_id_counter = 1
-video_id_counter = 1
-
-@app.put("/upload/{file_id}")
-async def upload_file(file_id: str, file: UploadFile = File(...)):
+@app.put("/upload/")
+async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Загружает файл (изображение или видео) на сервер с уникальным ID (file_id).
     """
-    global image_id_counter, video_id_counter
 
     file_extension = file.filename.split(".")[-1]
+    file_uuid = str(uuid.uuid4())
 
     if file_extension in ["png", "jpg", "jpeg"]:
-        file_id = f"img_{image_id_counter}"
-        image_id_counter += 1
+        file_type = "IMG"
     elif file_extension in ["mp4", "avi"]:
-        file_id = f"vid_{video_id_counter}"
-        video_id_counter += 1
+        file_type = "VID"
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    file_path = os.path.join(UPLOAD_DIRECTORY, f"{file_id}.{file_extension}")
+    file_path = os.path.join(UPLOAD_DIRECTORY, f"{file_uuid}.{file_extension}")
 
     with open(file_path, "wb") as buffer:
         buffer.write(await file.read())
 
-    return {"message": "File uploaded successfully", "file_id": file_id, "file_extension": file_extension}
+    # Сохранение информации о файле в базе данных
+    file_size = os.path.getsize(file_path)
+    create_media_file(db=db, file_uuid=file_uuid, file_path=file_path, file_type=file_type, file_size=file_size)
+
+    return {"message": "File uploaded successfully", "file_id": file_uuid, "file_extension": file_extension}
+
 
 @app.get("/download/{file_id}")
-async def download_file(file_id: str, width: int = None, height: int = None):
+async def download_file(file_id: str, width: int = None, height: int = None, db: Session = Depends(get_db)):
     """
     Загружает файл с сервера по ID. Если это изображение и указаны ширина и высота, возвращает превью.
     Если это видео, возвращает превью первого кадра как изображение.
     """
-    # Поиск файла (любого типа)
-    file_path = None
-    for extension in ["png", "jpg", "jpeg", "mp4", "avi"]:
-        potential_path = os.path.join(UPLOAD_DIRECTORY, f"{file_id}.{extension}")
-        if os.path.exists(potential_path):
-            file_path = potential_path
-            file_extension = extension
-            break
+    media_file = get_media_file_by_id(db=db, file_id=file_id)
 
-    # Если файл не найден, возвращаем ошибку 404
-    if not file_path:
+    if not media_file:
         raise HTTPException(status_code=404, detail="File not found")
+
+    file_path = media_file.file_path
+    file_extension = file_path.split(".")[-1]
 
     # Обработка изображения
     if file_extension in ["png", "jpg", "jpeg"]:
@@ -83,7 +82,8 @@ async def download_file(file_id: str, width: int = None, height: int = None):
                 preview_io = BytesIO()
                 img.save(preview_io, format="PNG")
                 preview_io.seek(0)
-                return StreamingResponse(preview_io, media_type="image/png", headers={"Content-Disposition": f"attachment; filename={file_id}_preview.png"})
+                return StreamingResponse(preview_io, media_type="image/png",
+                                         headers={"Content-Disposition": f"attachment; filename={file_id}_preview.png"})
         return FileResponse(file_path, media_type=f"image/{file_extension}", filename=f"{file_id}.{file_extension}")
 
     # Обработка видео
@@ -99,7 +99,8 @@ async def download_file(file_id: str, width: int = None, height: int = None):
             frame = cv2.resize(frame, (width, height))
             _, buffer = cv2.imencode('.png', frame)
             preview_io = BytesIO(buffer.tobytes())
-            return StreamingResponse(preview_io, media_type="image/png", headers={"Content-Disposition": f"attachment; filename={file_id}_preview.png"})
+            return StreamingResponse(preview_io, media_type="image/png",
+                                     headers={"Content-Disposition": f"attachment; filename={file_id}_preview.png"})
 
         # Если не требуется превью, возвращаем видеофайл
         return FileResponse(file_path, media_type="video/mp4", filename=f"{file_id}.{file_extension}")
