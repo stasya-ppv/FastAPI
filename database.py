@@ -1,20 +1,16 @@
 """
 Файл для конфигурации SQLAlchemy, создания сессий и работы с базой данных
 """
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlmodel import SQLModel, create_engine, Session
 
-DATABASE_URL = "sqlite:///./media_files.db"
+username = "postgres"
+password = "qwerty123"
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+DATABASE_URL = f"postgresql+psycopg2://{username}:{password}@localhost:5432/media_db"
 
+engine = create_engine(DATABASE_URL, echo=True)
 
-Base = declarative_base()
 
 def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    with Session(engine) as session:
+        yield session

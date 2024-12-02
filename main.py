@@ -24,13 +24,14 @@ import uvicorn
 import uuid
 from database import get_db
 from crud import create_media_file, get_media_file_by_id
-from sqlalchemy.orm import Session
+from sqlmodel import Session
 
 app = FastAPI()
 
 # Папка для хранения загруженных файлов
 UPLOAD_DIRECTORY = "uploads"
 os.makedirs(UPLOAD_DIRECTORY, exist_ok=True)
+
 
 @app.put("/upload/")
 async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -50,7 +51,7 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
 
     file_path = os.path.join(UPLOAD_DIRECTORY, f"{file_uuid}.{file_extension}")
 
-    with open(file_path, "wb") as buffer:
+    with open(file_path, "wb", encoding='utf-8') as buffer:
         buffer.write(await file.read())
 
     # Сохранение информации о файле в базе данных

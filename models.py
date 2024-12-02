@@ -2,17 +2,15 @@
 Файл для определения моделей базы данных
 """
 
-from sqlalchemy import Column, String, Integer, DateTime
-from database import Base
-from datetime import datetime, timezone
+from sqlmodel import SQLModel, Field
+from datetime import datetime
 
 
-class MediaFile(Base):
-    __tablename__ = "file_inform"
+class MediaFile(SQLModel, table=True):
+    id: str = Field(primary_key=True, index=True)
+    file_path: str
+    file_type: str
+    file_size: int
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    id = Column(String, primary_key=True, index=True)
-    file_path = Column(String)
-    file_type = Column(String)
-    file_size = Column(Integer)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
